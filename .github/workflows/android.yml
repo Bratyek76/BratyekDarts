@@ -19,11 +19,13 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Android SDK beállítása
-        uses: android-actions/setup-android@v3
+      
 
+      
       - name: Gradle telepítése
         uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
 
       - name: APK fordítása
         run: gradle assembleDebug --no-daemon
