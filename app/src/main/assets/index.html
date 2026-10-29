@@ -1,0 +1,161 @@
+
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Bratyek Darts</title>
+<style>
+body{margin:0;background:#101820;color:white;font:16px system-ui;text-align:center}
+header{padding:14px;background:#172633;font-size:23px;font-weight:800;color:#f8d14a}
+.controls,.players,.actions{display:flex;justify-content:center;gap:8px;flex-wrap:wrap;padding:10px}
+button,select{background:#263b49;color:white;border:1px solid #62717b;border-radius:9px;padding:10px;font-size:15px}
+.player{background:#20303a;border:2px solid transparent;border-radius:12px;padding:9px;min-width:120px}
+.player.active{border-color:#f8d14a}
+.score{font-size:38px;font-weight:800}
+.muted{color:#aabac1;font-size:13px}
+svg{display:block;width:min(94vw,460px);height:auto;margin:auto;touch-action:manipulation}
+#status{min-height:48px;font-size:18px;padding:8px;color:#f8d14a}
+.foot{font-size:12px;color:#9eaeb5;padding:12px}
+</style>
+</head>
+<body>
+<header>🎯 BRATYEK DARTS</header>
+<div class="controls">
+<select id="start"><option>501</option><option>301</option></select>
+<select id="count">
+<option value="2">2 játékos</option>
+<option value="1">1 játékos</option>
+<option value="3">3 játékos</option>
+<option value="4">4 játékos</option>
+</select>
+<label><input type="checkbox" id="voice" checked> 🔊 Hang</label>
+<button id="new">Új játék</button>
+</div>
+<div class="players" id="players"></div>
+<div id="status"></div>
+<svg id="board" viewBox="-225 -225 450 450"></svg>
+<div class="actions">
+<button id="miss">Mellé (0)</button>
+<button id="undo">↩ Visszavonás</button>
+<button id="next">Kör lezárása</button>
+</div>
+<div class="foot">Dupla kiszálló • 3 nyíl/kör • Offline</div>
+<script>
+const order=[20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+const NS="http://www.w3.org/2000/svg";
+const $=id=>document.getElementById(id);
+let players=[],turn=0,darts=0,roundStart=501,history=[],finished=false,turnPoints=0;
+
+function say(t){
+ if(!$("voice").checked)return;
+ if(window.Android&&Android.say){Android.say(t);return}
+ if("speechSynthesis"in window){
+  speechSynthesis.cancel();
+  let u=new SpeechSynthesisUtterance(t);
+  u.lang="hu-HU";
+  speechSynthesis.speak(u);
+ }
+}
+function polar(r,a){return [r*Math.sin(a),-r*Math.cos(a)]}
+function path(ri,ro,a,b){
+ let p1=polar(ro,a),p2=polar(ro,b),p3=polar(ri,b),p4=polar(ri,a);
+ return `M${p1.join(" ")} A${ro} ${ro} 0 0 1 ${p2.join(" ")} L${p3.join(" ")} A${ri} ${ri} 0 0 0 ${p4.join(" ")} Z`;
+}
+function el(tag,attrs,parent){
+ let n=document.createElementNS(NS,tag);
+ Object.entries(attrs).forEach(([k,v])=>n.setAttribute(k,v));
+ parent.appendChild(n);return n;
+}
+function draw(){
+ let b=$("board");b.innerHTML="";
+ el("circle",{r:215,fill:"#151515",stroke:"#999","stroke-width":3},b);
+ order.forEach((num,i)=>{
+  let a=(i-.5)*Math.PI/10,z=(i+.5)*Math.PI/10,light=i%2===0;
+  [[16,99,1],[99,109,3],[109,165,1],[165,175,2]].forEach(([ri,ro,m])=>{
+   let fill=m!==1?(light?"#d3343d":"#248d65"):(light?"#e5d6b7":"#20282b");
+   let p=el("path",{d:path(ri,ro,a,z),fill,stroke:"#888","stroke-width":.7},b);
+   p.addEventListener("click",()=>hit(num*m,m===2));
+  });
+  let [x,y]=polar(194,i*Math.PI/10);
+  let t=el("text",{x,y,fill:"white","font-size":17,"font-weight":700,"text-anchor":"middle","dominant-baseline":"middle","pointer-events":"none"},b);
+  t.textContent=num;
+ });
+ el("circle",{r:16,fill:"#268e65"},b).addEventListener("click",()=>hit(25,false));
+ el("circle",{r:7,fill:"#d3343d"},b).addEventListener("click",()=>hit(50,true));
+}
+function render(message){
+ let box=$("players");box.innerHTML="";
+ players.forEach((p,i)=>{
+  let d=document.createElement("div");
+  d.className="player "+(turn===i?"active":"");
+  let avg=p.thrown?(p.points/p.thrown*3).toFixed(1):"0.0";
+  d.innerHTML=`<div>${p.name}</div><div class="score">${p.score}</div><div class="muted">Legek: ${p.legs} · Átlag: ${avg}</div>`;
+  box.appendChild(d);
+ });
+ if(message)$("status").textContent=message;
+ else if(!finished)$("status").textContent=`${players[turn].name} következik · ${darts+1}. nyíl / 3`;
+}
+function snapshot(){
+ history.push(JSON.stringify({players,turn,darts,roundStart,finished,turnPoints}));
+ if(history.length>200)history.shift();
+}
+function hit(points,isDouble){
+ if(finished)return;
+ snapshot();
+ let p=players[turn],remaining=p.score-points;
+ p.thrown++;p.points+=points;darts++;turnPoints+=points;
+ if(remaining===0&&isDouble){
+  p.score=0;p.legs++;finished=true;
+  render(`🏆 ${p.name} kiszállt!`);
+  say(`${p.name}, kiszálló! Győzelem!`);
+  return;
+ }
+ if(remaining<0||remaining===1||(remaining===0&&!isDouble)){
+  p.score=roundStart;
+  p.points-=turnPoints;
+  render(`${p.name}: érvénytelen kör!`);
+  say("Érvénytelen kör");
+  advance();
+  return;
+ }
+ p.score=remaining;
+ if(darts===3){
+  let total=turnPoints;
+  advance();
+  say(`${total} pont`);
+ }else{
+  say(`${points} pont`);
+  render();
+ }
+}
+function advance(){
+ darts=0;turnPoints=0;
+ turn=(turn+1)%players.length;
+ roundStart=players[turn].score;
+ render();
+}
+function fresh(){
+ let n=+$("count").value,s=+$("start").value;
+ players=Array.from({length:n},(_,i)=>({
+  name:"Játékos "+(i+1),score:s,legs:0,points:0,thrown:0
+ }));
+ turn=0;darts=0;turnPoints=0;roundStart=s;
+ history=[];finished=false;render();
+}
+$("new").onclick=fresh;
+$("miss").onclick=()=>hit(0,false);
+$("undo").onclick=()=>{
+ if(!history.length)return;
+ let h=JSON.parse(history.pop());
+ ({players,turn,darts,roundStart,finished,turnPoints}=h);
+ render();
+};
+$("next").onclick=()=>{
+ if(finished)return;
+ snapshot();advance();
+};
+draw();fresh();
+</script>
+</body>
+</html>
